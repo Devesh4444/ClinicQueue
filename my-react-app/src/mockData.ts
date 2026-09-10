@@ -1,0 +1,91 @@
+import type { Clinic, Doctor } from './type';
+
+export interface ClinicWithDoctors extends Clinic {
+  doctors: Doctor[];
+}
+
+export const MOCK_CLINICS: ClinicWithDoctors[] = [
+  {
+    id: 'clinic-1',
+    name: 'City Care Polyclinic',
+    address: '42 Healthway Ave, Suite 100',
+    distance_km: 4.8,
+    mock_transit_minutes: 14,
+    doctors: [
+      {
+        id: 'doc-1',
+        clinic_id: 'clinic-1',
+        name: 'Dr. Sharma',
+        specialty: 'General Medicine',
+        schedule: 'Mon - Fri, 9:00 AM - 1:00 PM',
+        avg_consult_min: 10,
+        std_dev_min: 3,
+        token_price: 10.0,
+        experience: '14 yrs exp',
+        qualifications: 'MBBS, MD (Internal Med)',
+        queue_length: 3,
+      },
+      {
+        id: 'doc-2',
+        clinic_id: 'clinic-1',
+        name: 'Dr. Priya Patel',
+        specialty: 'Pediatrics',
+        schedule: 'Mon - Sat, 2:00 PM - 6:00 PM',
+        avg_consult_min: 12,
+        std_dev_min: 4,
+        token_price: 15.0,
+        experience: '9 yrs exp',
+        qualifications: 'MBBS, DCH (Pediatrics)',
+        queue_length: 2,
+      },
+      {
+        id: 'doc-3',
+        clinic_id: 'clinic-1',
+        name: 'Dr. Aris Thorne',
+        specialty: 'Orthopedics',
+        schedule: 'Tue - Thu, 10:00 AM - 4:00 PM',
+        avg_consult_min: 15,
+        std_dev_min: 5,
+        token_price: 25.0,
+        experience: '18 yrs exp',
+        qualifications: 'MBBS, MS (Orthopedics)',
+        queue_length: 0,
+      },
+      {
+        id: 'doc-4',
+        clinic_id: 'clinic-1',
+        name: 'Dr. Ananya Sen',
+        specialty: 'Dermatology',
+        schedule: 'Wed - Sun, 11:00 AM - 3:00 PM',
+        avg_consult_min: 8,
+        std_dev_min: 2,
+        token_price: 20.0,
+        experience: '7 yrs exp',
+        qualifications: 'MBBS, DVD (Dermatology)',
+        queue_length: 0,
+      },
+    ],
+  },
+  {
+    id: 'clinic-2',
+    name: 'Metro Orthopedic & Sports Clinic',
+    address: '88 Central Boulevard',
+    distance_km: 9.2,
+    mock_transit_minutes: 24,
+    doctors: [
+      {
+        id: 'doc-3',
+        clinic_id: 'clinic-2',
+        name: 'Dr. Aris Thorne',
+        specialty: 'Orthopedics',
+        schedule: 'Tue - Thu, 10:00 AM - 4:00 PM',
+        avg_consult_min: 15,
+        std_dev_min: 5,
+        token_price: 25.0,
+        experience: '18 yrs exp',
+        qualifications: 'MBBS, MS (Orthopedics)',
+        queue_length: 0,
+      },
+    ],
+  },
+];

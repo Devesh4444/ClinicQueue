@@ -1,0 +1,14 @@
+﻿node_modules/
+*.db
+*.db-wal
+*.db-shm
+dist/
+dist-ssr/
+build/
+*.local
+.env*
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
