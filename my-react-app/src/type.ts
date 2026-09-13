@@ -13,19 +13,46 @@ export interface Doctor {
   token_price: number;
   experience: string;
   qualifications: string;
+  rating?: number;
+  review_count?: number;
   queue_length?: number;
+  clinic_name?: string;
+  clinic_address?: string;
+  neighborhood?: string;
+  distance_km?: number;
+  mock_transit_minutes?: number;
+  clinic_rating?: number;
 }
 
 export interface Clinic {
   id: string;
   name: string;
   address: string;
+  neighborhood?: string;
   distance_km: number;
   mock_transit_minutes: number;
+  rating?: number;
+  review_count?: number;
+}
+
+export interface User {
+  id: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  created_at?: string;
+}
+
+export interface AuthResponse {
+  success: boolean;
+  user: User;
+  token: string;
+  error?: string;
 }
 
 export interface PatientToken {
   id: string;
+  user_id?: string;
   token_number: string;
   clinic_id: string;
   doctor_id: string;
@@ -38,6 +65,11 @@ export interface PatientToken {
   position: number;
   mock_transit_duration_min: number;
   created_at: string;
+  doctor_name?: string;
+  doctor_specialty?: string;
+  clinic_name?: string;
+  clinic_address?: string;
+  distance_km?: number;
 }
 
 export interface QueueResponse {

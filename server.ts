@@ -3,6 +3,7 @@ import cors from 'cors';
 import crypto from 'crypto';
 import db from './db';
 import { dispatchWebhook } from './webhook';
+import { hashPassword, verifyPassword, generateToken, verifyToken } from './auth';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -10,13 +11,209 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// 1. GET ALL DOCTORS WITH LIVE QUEUE LENGTHS
+// 0. AUTHENTICATION ENDPOINTS
+app.post('/api/auth/signup', async (req: Request, res: Response) => {
+  try {
+    const { fullName, email, phone, password, firebaseUid } = req.body;
+    if (!fullName || !email || !phone || !password) {
+      return res.status(400).json({ error: 'fullName, email, phone, and password are required' });
+    }
+
+    const cleanPhone = phone.trim();
+    const cleanEmail = email.trim().toLowerCase();
+
+    // Check if user already exists
+    const existing = db.prepare('SELECT id, phone, email FROM users WHERE phone = ? OR email = ?').get(cleanPhone, cleanEmail) as any;
+    if (existing) {
+      if (existing.phone === cleanPhone) {
+        return res.status(409).json({ error: 'An account with this phone number already exists' });
+      }
+      return res.status(409).json({ error: 'An account with this email already exists' });
+    }
+
+    const passwordHash = await hashPassword(password);
+    const userId = crypto.randomUUID();
+
+    db.prepare(`
+      INSERT INTO users (id, full_name, email, phone, password_hash, firebase_uid)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(userId, fullName.trim(), cleanEmail, cleanPhone, passwordHash, firebaseUid || null);
+
+    const user = { id: userId, full_name: fullName.trim(), email: cleanEmail, phone: cleanPhone };
+    const token = generateToken(user);
+
+    res.status(201).json({ success: true, user, token });
+  } catch (error: any) {
+    console.error('Signup error:', error);
+    res.status(500).json({ error: error.message || 'Signup failed' });
+  }
+});
+
+app.post('/api/auth/login', async (req: Request, res: Response) => {
+  try {
+    const { phone, password } = req.body;
+    if (!phone || !password) {
+      return res.status(400).json({ error: 'phone and password are required' });
+    }
+
+    const cleanPhone = phone.trim();
+    const user = db.prepare('SELECT * FROM users WHERE phone = ?').get(cleanPhone) as any;
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid phone number or password' });
+    }
+
+    const isValid = await verifyPassword(password, user.password_hash);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Invalid phone number or password' });
+    }
+
+    const safeUser = {
+      id: user.id,
+      full_name: user.full_name,
+      email: user.email,
+      phone: user.phone,
+      created_at: user.created_at,
+    };
+    const token = generateToken(safeUser);
+
+    res.json({ success: true, user: safeUser, token });
+  } catch (error: any) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: error.message || 'Login failed' });
+  }
+});
+
+app.get('/api/auth/me', (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authorization header missing' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  const decoded = verifyToken(token);
+  if (!decoded) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+
+  const user = db.prepare('SELECT id, full_name, email, phone, created_at FROM users WHERE id = ?').get(decoded.userId) as any;
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  res.json({ user });
+});
+
+app.put('/api/auth/profile', (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authorization header missing' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  const decoded = verifyToken(token);
+  if (!decoded) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+
+  const { fullName, email } = req.body;
+  if (!fullName || !email) {
+    return res.status(400).json({ error: 'fullName and email are required' });
+  }
+
+  db.prepare('UPDATE users SET full_name = ?, email = ? WHERE id = ?')
+    .run(fullName.trim(), email.trim().toLowerCase(), decoded.userId);
+
+  const updatedUser = db.prepare('SELECT id, full_name, email, phone, created_at FROM users WHERE id = ?').get(decoded.userId) as any;
+  const newToken = generateToken(updatedUser);
+
+  res.json({ success: true, user: updatedUser, token: newToken });
+});
+
+app.get('/api/user/tokens', (req: Request, res: Response) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authorization header missing' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  const decoded = verifyToken(token);
+  if (!decoded) {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+
+  const userTokens = db.prepare(`
+    SELECT t.*, 
+      d.name as doctor_name, d.specialty as doctor_specialty, d.avg_consult_min,
+      c.name as clinic_name, c.address as clinic_address, c.distance_km
+    FROM tokens t
+    JOIN doctors d ON t.doctor_id = d.id
+    JOIN clinics c ON t.clinic_id = c.id
+    WHERE t.user_id = ? OR t.phone = ?
+    ORDER BY t.created_at DESC
+  `).all(decoded.userId, decoded.phone);
+
+  res.json(userTokens);
+});
+
+// 1. GET ALL DOCTORS WITH RICH CLINIC DATA, SEARCH & FILTERS
 app.get('/api/doctors', (req: Request, res: Response) => {
-  const doctors = db.prepare(`
+  const { search, department, maxPrice, maxDistance, sortBy } = req.query;
+
+  let query = `
     SELECT d.*, 
+      c.name as clinic_name, 
+      c.address as clinic_address, 
+      c.neighborhood, 
+      c.distance_km, 
+      c.mock_transit_minutes, 
+      c.rating as clinic_rating,
       (SELECT COUNT(*) FROM tokens t WHERE t.doctor_id = d.id AND t.queue_status IN ('WAITING', 'SERVING')) as queue_length
     FROM doctors d
-  `).all();
+    JOIN clinics c ON d.clinic_id = c.id
+    WHERE 1=1
+  `;
+
+  const params: any[] = [];
+
+  if (department && department !== 'All') {
+    query += ' AND d.specialty LIKE ?';
+    params.push(`%${department}%`);
+  }
+
+  if (search) {
+    query += ` AND (
+      d.name LIKE ? OR 
+      d.specialty LIKE ? OR 
+      c.name LIKE ? OR 
+      c.neighborhood LIKE ?
+    )`;
+    const searchWild = `%${search}%`;
+    params.push(searchWild, searchWild, searchWild, searchWild);
+  }
+
+  if (maxPrice) {
+    query += ' AND d.token_price <= ?';
+    params.push(Number(maxPrice));
+  }
+
+  if (maxDistance) {
+    query += ' AND c.distance_km <= ?';
+    params.push(Number(maxDistance));
+  }
+
+  if (sortBy === 'distance') {
+    query += ' ORDER BY c.distance_km ASC';
+  } else if (sortBy === 'rating') {
+    query += ' ORDER BY d.rating DESC, d.review_count DESC';
+  } else if (sortBy === 'price_asc') {
+    query += ' ORDER BY d.token_price ASC';
+  } else if (sortBy === 'price_desc') {
+    query += ' ORDER BY d.token_price DESC';
+  } else {
+    query += ' ORDER BY c.distance_km ASC, d.rating DESC';
+  }
+
+  const doctors = db.prepare(query).all(...params);
   res.json(doctors);
 });
 
@@ -24,8 +221,9 @@ app.get('/api/doctors', (req: Request, res: Response) => {
 app.get('/api/queue', (req: Request, res: Response) => {
   const doctorId = (req.query.doctorId as string) || 'doc-1';
 
-  const clinic = db.prepare('SELECT * FROM clinics LIMIT 1').get();
-  const doctor = db.prepare('SELECT * FROM doctors WHERE id = ?').get(doctorId);
+  const doctor = db.prepare('SELECT * FROM doctors WHERE id = ?').get(doctorId) as any;
+  const clinicId = doctor?.clinic_id || 'clinic-1';
+  const clinic = db.prepare('SELECT * FROM clinics WHERE id = ?').get(clinicId);
   const state = db.prepare('SELECT * FROM queue_states WHERE doctor_id = ?').get(doctorId);
   const activeTokens = db.prepare(`
     SELECT * FROM tokens 
@@ -38,7 +236,7 @@ app.get('/api/queue', (req: Request, res: Response) => {
 
 // 3. BOOK TOKEN (Online or Walk-in)
 app.post('/api/queue', async (req: Request, res: Response) => {
-  const { clinicId, doctorId, patientName, phone, isWalkIn } = req.body;
+  const { clinicId, doctorId, patientName, phone, isWalkIn, userId } = req.body;
 
   if (!doctorId || !clinicId) {
     return res.status(400).json({ error: 'doctorId and clinicId are required' });
@@ -59,13 +257,14 @@ app.post('/api/queue', async (req: Request, res: Response) => {
 
   const insertStmt = db.prepare(`
     INSERT INTO tokens (
-      id, token_number, clinic_id, doctor_id, patient_name, phone,
+      id, user_id, token_number, clinic_id, doctor_id, patient_name, phone,
       is_emergency, check_in_status, queue_status, position, mock_transit_duration_min
-    ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, 'WAITING', ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, 'WAITING', ?, ?)
   `);
 
   insertStmt.run(
     tokenId,
+    userId || null,
     tokenNumber,
     clinicId,
     doctorId,
